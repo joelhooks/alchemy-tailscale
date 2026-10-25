@@ -1,0 +1,2 @@
+# Preserve the exact upstream bytes and SHA-256, including upstream whitespace.
+spec/openapi.yaml -whitespace

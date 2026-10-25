@@ -1,0 +1,31 @@
+{
+  "policy": { "grants": [], "tagOwners": { "tag:server": ["user@example.com"] } },
+  "dns": {
+    "nameservers": [],
+    "splitDNS": {},
+    "searchPaths": ["example.com"],
+    "preferences": { "magicDNS": true, "overrideLocalDNS": false }
+  },
+  "device": { "id": "example-device", "tags": ["tag:server"], "authorized": true },
+  "key": {
+    "id": "example-key",
+    "key": "tskey-auth-synthetic-example-only",
+    "keyType": "auth",
+    "created": "2026-01-01T00:00:00Z",
+    "expires": "2026-01-02T00:00:00Z",
+    "capabilities": {
+      "devices": {
+        "create": {
+          "tags": ["tag:server"],
+          "reusable": false,
+          "ephemeral": true,
+          "preauthorized": true
+        }
+      }
+    }
+  },
+  "validationFailure": {
+    "message": "test(s) failed",
+    "data": [{ "user": "user@example.com", "errors": ["synthetic denied destination"] }]
+  }
+}

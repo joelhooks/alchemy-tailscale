@@ -5,3 +5,6 @@ dist/
 .scratch/
 .agent_sources/
 .agent-sources/
+.brain/
+.pi/
+BRAIN.md

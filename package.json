@@ -1,0 +1,53 @@
+{
+  "name": "alchemy-tailscale",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Adopt-first Tailscale resources for Alchemy",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "PROVENANCE.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "check": "pnpm generate:check && pnpm typecheck && pnpm lint && pnpm format:check",
+    "build": "effect-tsgo patch && tsc -p tsconfig.build.json",
+    "typecheck": "pnpm build && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.consumer.json",
+    "test": "pnpm build && ALCHEMY_TELEMETRY_DISABLED=1 vitest run",
+    "lint": "oxlint --type-aware",
+    "format:check": "oxfmt --check src test scripts *.ts *.json AGENTS.md README.md PROVENANCE.md pnpm-workspace.yaml",
+    "format": "oxfmt --write src test scripts *.ts *.json AGENTS.md README.md PROVENANCE.md pnpm-workspace.yaml",
+    "generate": "node --experimental-strip-types scripts/generate-client.ts",
+    "generate:check": "node --experimental-strip-types scripts/generate-client.ts --check",
+    "vendor:agent-sources": "bash scripts/vendor-agent-sources.sh"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.45.0",
+    "@types/node": "24.19.2",
+    "alchemy": "2.0.0-beta.83",
+    "effect": "4.0.5",
+    "oxfmt": "0.73.0",
+    "oxlint": "1.88.0",
+    "oxlint-tsgolint": "7.0.2004",
+    "typescript": "7.0.2",
+    "ultracite": "8.0.1",
+    "vitest": "5.0.5",
+    "yaml": "2.8.1"
+  },
+  "peerDependencies": {
+    "alchemy": "2.0.0-beta.83",
+    "effect": "4.0.5"
+  },
+  "engines": {
+    "node": ">=24.18.0"
+  },
+  "packageManager": "pnpm@11.3.0"
+}
