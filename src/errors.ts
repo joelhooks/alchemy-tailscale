@@ -1,0 +1,38 @@
+// Effect's TaggedError is a curried class factory, not a constructor call.
+/* oxlint-disable unicorn/throw-new-error, max-classes-per-file */
+import { Schema } from "effect";
+
+export class ApiError extends Schema.TaggedError<ApiError>()("ApiError", {
+  status: Schema.Number,
+}) {}
+export class TransportError extends Schema.TaggedError<TransportError>()("TransportError", {}) {}
+export class InvalidResponse extends Schema.TaggedError<InvalidResponse>()("InvalidResponse", {}) {}
+export class PreconditionFailed extends Schema.TaggedError<PreconditionFailed>()(
+  "PreconditionFailed",
+  {},
+) {}
+export class AdoptionMismatch extends Schema.TaggedError<AdoptionMismatch>()("AdoptionMismatch", {
+  resource: Schema.String,
+}) {}
+export class MissingEtag extends Schema.TaggedError<MissingEtag>()("MissingEtag", {}) {}
+export class PolicyValidationFailed extends Schema.TaggedError<PolicyValidationFailed>()(
+  "PolicyValidationFailed",
+  {},
+) {}
+export class UnsafeDnsWrite extends Schema.TaggedError<UnsafeDnsWrite>()("UnsafeDnsWrite", {}) {}
+export class DeviceLifecycleRefused extends Schema.TaggedError<DeviceLifecycleRefused>()(
+  "DeviceLifecycleRefused",
+  {
+    operation: Schema.Literals(["create", "delete", "changeIdentity"]),
+  },
+) {}
+export class SecretDeliveryFailed extends Schema.TaggedError<SecretDeliveryFailed>()(
+  "SecretDeliveryFailed",
+  {
+    keyId: Schema.String,
+  },
+) {}
+export class KeyReplacementRequired extends Schema.TaggedError<KeyReplacementRequired>()(
+  "KeyReplacementRequired",
+  {},
+) {}

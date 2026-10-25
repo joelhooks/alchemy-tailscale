@@ -1,0 +1,6 @@
+allowBuilds:
+  workerd: false
+# Alchemy's optional SQL adapters must use the same Effect patch as this provider.
+overrides:
+  "@effect/sql-d1": "4.0.5"
+  "@effect/sql-sqlite-do": "4.0.5"
