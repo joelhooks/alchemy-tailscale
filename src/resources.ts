@@ -105,6 +105,11 @@ export class AuthKeySecrets extends Context.Service<
 const mismatch = (resource: string) => Effect.fail(new AdoptionMismatch({ resource }));
 const sameTags = (left: readonly string[], right: readonly string[]) =>
   deepEqual(left.toSorted(), right.toSorted());
+const deviceMatches = (props: DeviceTagsProps | undefined, live: DeviceTagsAttributes) =>
+  props !== undefined &&
+  props.deviceId === live.deviceId &&
+  sameTags(props.tags, live.tags) &&
+  (props.authorized === undefined || props.authorized === live.authorized);
 
 export const policyFileService = Effect.gen(function* policyFileService() {
   const { tailnet } = yield* Credentials;
@@ -114,12 +119,23 @@ export const policyFileService = Effect.gen(function* policyFileService() {
   });
   return {
     delete: () => Effect.void,
-    diff: ({ news, output }) =>
-      Effect.sync(() => {
-        if (isResolved(news) && (!output || !deepEqual(news.policy, output.policy))) {
-          return { action: "update" } as const;
-        }
-      }),
+    diff: Effect.fn("PolicyFile.diff")(function* policyDiff({ news, olds, output }) {
+      if (!isResolved(news)) {
+        return;
+      }
+      if (output && deepEqual(olds, news) && !deepEqual(news.policy, output.policy)) {
+        return yield* mismatch("PolicyFile");
+      }
+      // Normal created/updated rows carry recorded attributes, not a fresh read.
+      // Observe here as well, so an owned plan cannot hide external drift.
+      const live = yield* observe();
+      if (!deepEqual(olds?.policy, live.policy)) {
+        return yield* mismatch("PolicyFile drift");
+      }
+      if (!deepEqual(news.policy, live.policy)) {
+        return { action: "update" } as const;
+      }
+    }),
     nuke: { singleton: true },
     read: Effect.fn("PolicyFile.read")(function* program({
       output,
@@ -166,7 +182,7 @@ export const policyFileService = Effect.gen(function* policyFileService() {
       const updated = yield* Api.setPolicyFile({ tailnet }, news.policy, { "If-Match": live.etag });
       return { etag: updated.etag, policy: updated.body, tailnet };
     }),
-  } satisfies Provider.ProviderServiceInput<PolicyFile, Transport, never, never, Transport>;
+  } satisfies Provider.ProviderServiceInput<PolicyFile, Transport, Transport, never, Transport>;
 });
 
 export const dnsService = Effect.gen(function* dnsService() {
@@ -177,12 +193,21 @@ export const dnsService = Effect.gen(function* dnsService() {
   });
   return {
     delete: () => Effect.void,
-    diff: ({ news, output }) =>
-      Effect.sync(() => {
-        if (isResolved(news) && (!output || !deepEqual(news.configuration, output.configuration))) {
-          return { action: "update" } as const;
-        }
-      }),
+    diff: Effect.fn("Dns.diff")(function* dnsDiff({ news, olds, output }) {
+      if (!isResolved(news)) {
+        return;
+      }
+      if (output && deepEqual(olds, news) && !deepEqual(news.configuration, output.configuration)) {
+        return yield* mismatch("Dns");
+      }
+      const live = yield* observe();
+      if (!deepEqual(olds?.configuration, live.configuration)) {
+        return yield* mismatch("Dns drift");
+      }
+      if (!deepEqual(news.configuration, live.configuration)) {
+        return { action: "update" } as const;
+      }
+    }),
     nuke: { singleton: true },
     read: Effect.fn("Dns.read")(function* program({
       output,
@@ -212,7 +237,7 @@ export const dnsService = Effect.gen(function* dnsService() {
       // that may be ignored does not make a fleet-wide overwrite safe.
       return yield* Effect.fail(new UnsafeDnsWrite());
     }),
-  } satisfies Provider.ProviderServiceInput<Dns, Transport, never, never, Transport>;
+  } satisfies Provider.ProviderServiceInput<Dns, Transport, Transport, never, Transport>;
 });
 
 export const deviceTagsService = Effect.sync(() => {
@@ -230,19 +255,22 @@ export const deviceTagsService = Effect.sync(() => {
     return { authorized: current.body.authorized, deviceId, tags: current.body.tags ?? [] };
   });
   return {
-    delete: () => Effect.fail(new DeviceLifecycleRefused({ operation: "delete" })),
-    diff: Effect.fn("DeviceTags.diff")(function* program({ news, output }) {
+    delete: () => Effect.void,
+    diff: Effect.fn("DeviceTags.diff")(function* program({ news, olds, output }) {
       if (!isResolved(news)) {
         return;
       }
       if (output && news.deviceId !== output.deviceId) {
         return yield* Effect.fail(new DeviceLifecycleRefused({ operation: "changeIdentity" }));
       }
-      if (
-        !output ||
-        !sameTags(news.tags, output.tags) ||
-        (news.authorized !== undefined && news.authorized !== output.authorized)
-      ) {
+      if (output && deepEqual(olds, news) && !deviceMatches(news, output)) {
+        return yield* mismatch("DeviceTags");
+      }
+      const live = yield* observe(news.deviceId);
+      if (!deviceMatches(olds, live)) {
+        return yield* mismatch("DeviceTags drift");
+      }
+      if (!deviceMatches(news, live)) {
         return { action: "update" } as const;
       }
     }),
@@ -300,7 +328,7 @@ export const deviceTagsService = Effect.sync(() => {
       }
       return yield* observe(news.deviceId);
     }),
-  } satisfies Provider.ProviderServiceInput<DeviceTags, Transport, never, never, Transport>;
+  } satisfies Provider.ProviderServiceInput<DeviceTags, Transport, Transport, never, Transport>;
 });
 
 export const authKeyService = Effect.gen(function* authKeyService() {
