@@ -323,15 +323,14 @@ describe("DeviceTags", () => {
     expect(error).toMatchObject({ _tag: "DeviceLifecycleRefused", operation: "create" });
     expect(f.requests.map((r) => r.method)).toEqual(["GET"]);
   });
-  it("refuses deletion without issuing any device delete request", async () => {
+  it("retains the device and its tags on removal without any API request", async () => {
     const f = fake([]);
-    const error = await f.run(
-      Effect.gen(function* error() {
+    await f.run(
+      Effect.gen(function* retainDevice() {
         const service = yield* deviceTagsService;
-        return yield* service.delete().pipe(Effect.flip);
+        yield* service.delete();
       }),
     );
-    expect(error).toMatchObject({ _tag: "DeviceLifecycleRefused", operation: "delete" });
     expect(f.requests).toHaveLength(0);
   });
   it("updates only tags and authorization of the existing device", async () => {

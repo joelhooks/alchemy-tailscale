@@ -1,14 +1,14 @@
 # alchemy-tailscale
 
 Adopt-first Tailscale resources for [Alchemy](https://alchemy.run), using Effect 4.
-This is an unpublished provider prototype. No live-tailnet test has been run.
+This is an unpublished provider prototype. Development tests use synthetic fixtures.
 
-| Resource               | Behavior                                                                                                                                          |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Tailscale.PolicyFile` | Adopt an exact policy match, then validate and update using the ETag read immediately before writing. Retain on removal.                          |
-| `Tailscale.DeviceTags` | Adopt existing tags and authorization; update only an existing device. Never create or delete a device. Retain on removal; direct delete refuses. |
-| `Tailscale.AuthKey`    | Create auth keys, deliver the one-time secret to an explicit sink, and revoke on removal. Input changes replace the key.                          |
-| `Tailscale.Dns`        | Read/adopt exact DNS configuration only. Changed writes fail with `UnsafeDnsWrite`. Retain on removal.                                            |
+| Resource               | Behavior                                                                                                                                                          |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Tailscale.PolicyFile` | Adopt an exact policy match, then validate and update using the ETag read immediately before writing. Retain on removal.                                          |
+| `Tailscale.DeviceTags` | Adopt existing tags and authorization; update only an existing device. Never create or delete a device. Removal succeeds without changing the device or its tags. |
+| `Tailscale.AuthKey`    | Create auth keys, deliver the one-time secret to an explicit sink, and revoke on removal. Input changes replace the key.                                          |
+| `Tailscale.Dns`        | Read/adopt exact DNS configuration only. Changed writes fail with `UnsafeDnsWrite`. Retain on removal.                                                            |
 
 ## Environment
 
@@ -52,6 +52,14 @@ Alchemy's explicit adoption option. Cold singleton reads are marked `Unowned`.
 Even with `--adopt`, the first reconciliation requires an exact match and sends
 no write. Alchemy beta.83 can pass observed output with `olds: undefined` during
 adoption; that still counts as a first reconciliation, not an update grant.
+
+Planning checks live policy, DNS and device tags against the recorded props.
+Cold adoption fails with `AdoptionMismatch` when desired props differ from the
+observed resource. Exact adoption still prints `adopted` in Alchemy beta.83;
+that label is not a remote write. Owned live drift also fails during planning,
+even when the desired props have not changed. Ordinary owned input changes still
+plan as `update` when the live resource matches the recorded props. DNS apply
+continues to refuse changed writes until conditional writes are supported.
 
 On later policy updates, the provider rereads the policy, refuses drift from the
 recorded props, requires an ETag, calls `/acl/validate`, and only then POSTs
