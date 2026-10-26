@@ -118,9 +118,40 @@ describe("PolicyFile", () => {
         }),
       );
       expect(error._tag).toBe("AdoptionMismatch");
+      expect(error.message).toContain(
+        "Tailscale.PolicyFile: adoption or drift mismatch at policy.grants",
+      );
       expect(f.requests.map((r) => r.method)).toEqual(["GET"]);
     },
   );
+  it("reports policy map paths and logical id, never policy values", async () => {
+    const f = fake([policyReply()]);
+    const error = await f.run(
+      Effect.gen(function* error() {
+        const service = yield* policyFileService;
+        return yield* service
+          .reconcile({
+            id: "LogicalPolicy",
+            news: {
+              policy: {
+                ...fixtures.policy,
+                tagOwners: { "tag:server": ["private-owner@example.net"] },
+              },
+            },
+            olds: undefined,
+            output: undefined,
+          })
+          .pipe(Effect.flip);
+      }),
+    );
+    expect(error.message).toContain(
+      'Tailscale.PolicyFile (LogicalPolicy): adoption or drift mismatch at policy.tagOwners["tag:server"]',
+    );
+    expect(error.message).not.toContain("private-owner");
+    expect(JSON.stringify(error)).not.toContain("private-owner");
+    expect(JSON.stringify(error)).not.toContain("user@example.com");
+    expect(f.requests.map((r) => r.method)).toEqual(["GET"]);
+  });
   it("validates before writing and sends exactly the read ETag", async () => {
     const f = fake([
       policyReply(),
@@ -213,6 +244,9 @@ describe("PolicyFile", () => {
       }),
     );
     expect(error._tag).toBe("AdoptionMismatch");
+    expect(error.message).toContain(
+      "Tailscale.PolicyFile: adoption or drift mismatch at policy.tagOwners",
+    );
     expect(f.requests).toHaveLength(1);
   });
   it("retains on delete", async () => {
@@ -254,6 +288,9 @@ describe("Dns", () => {
       }),
     );
     expect(error._tag).toBe("AdoptionMismatch");
+    expect(error.message).toContain("Tailscale.Dns: adoption or drift mismatch at configuration.");
+    expect(error.message).toContain("configuration.searchPaths");
+    expect(error.message).not.toContain("example.com");
     expect(f.requests).toHaveLength(1);
   });
   it("refuses even owned changes until the API supports conditional writes", async () => {
@@ -308,7 +345,46 @@ describe("DeviceTags", () => {
       }),
     );
     expect(error._tag).toBe("AdoptionMismatch");
+    expect(error.message).toContain("Tailscale.DeviceTags: adoption or drift mismatch at tags");
+    expect(error.message).not.toContain("tag:server");
     expect(f.requests).toHaveLength(1);
+  });
+  it("reports both tag and authorization drift without tag values", async () => {
+    const f = fake([{ body: fixtures.device }]);
+    const error = await f.run(
+      Effect.gen(function* error() {
+        const service = yield* deviceTagsService;
+        return yield* service
+          .reconcile({
+            id: "LogicalDevice",
+            news: { ...deviceProps, authorized: false, tags: ["tag:private-value"] },
+            olds: undefined,
+            output: undefined,
+          })
+          .pipe(Effect.flip);
+      }),
+    );
+    expect(error.message).toContain(
+      "Tailscale.DeviceTags (LogicalDevice): adoption or drift mismatch at tags, authorized",
+    );
+    expect(JSON.stringify(error)).not.toContain("tag:private-value");
+    expect(error.message).not.toContain("true");
+    expect(error.message).not.toContain("false");
+    expect(f.requests.map((r) => r.method)).toEqual(["GET"]);
+  });
+  it("adopts reordered tags and ignores unspecified authorization", async () => {
+    const f = fake([{ body: { ...fixtures.device, tags: ["tag:server", "tag:example"] } }]);
+    await f.run(
+      Effect.gen(function* adopt() {
+        const service = yield* deviceTagsService;
+        return yield* service.reconcile({
+          news: { deviceId: "example-device", tags: ["tag:example", "tag:server"] },
+          olds: undefined,
+          output: undefined,
+        });
+      }),
+    );
+    expect(f.requests.map((r) => r.method)).toEqual(["GET"]);
   });
   it("refuses to create a missing device", async () => {
     const f = fake([{ status: 404 }]);

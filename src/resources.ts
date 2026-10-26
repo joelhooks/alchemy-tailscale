@@ -9,8 +9,8 @@ import { deepEqual, isResolved } from "alchemy/Diff";
 import { Credentials } from "./credentials.ts";
 import type { Transport } from "./transport.ts";
 import * as Api from "./generated/client.ts";
+import { changedPaths, mismatch } from "./mismatch.ts";
 import {
-  AdoptionMismatch,
   DeviceLifecycleRefused,
   InvalidResponse,
   KeyReplacementRequired,
@@ -102,9 +102,15 @@ export class AuthKeySecrets extends Context.Service<
   }
 >()("Tailscale.AuthKeySecrets") {}
 
-const mismatch = (resource: string) => Effect.fail(new AdoptionMismatch({ resource }));
 const sameTags = (left: readonly string[], right: readonly string[]) =>
   deepEqual(left.toSorted(), right.toSorted());
+const devicePaths = (props: DeviceTagsProps | undefined, live: DeviceTagsAttributes) => [
+  ...(props?.deviceId === live.deviceId ? [] : ["deviceId"]),
+  ...(props && sameTags(props.tags, live.tags) ? [] : ["tags"]),
+  ...(props?.authorized === undefined || props.authorized === live.authorized
+    ? []
+    : ["authorized"]),
+];
 const deviceMatches = (props: DeviceTagsProps | undefined, live: DeviceTagsAttributes) =>
   props !== undefined &&
   props.deviceId === live.deviceId &&
@@ -119,18 +125,26 @@ export const policyFileService = Effect.gen(function* policyFileService() {
   });
   return {
     delete: () => Effect.void,
-    diff: Effect.fn("PolicyFile.diff")(function* policyDiff({ news, olds, output }) {
+    diff: Effect.fn("PolicyFile.diff")(function* policyDiff({ id, news, olds, output }) {
       if (!isResolved(news)) {
         return;
       }
       if (output && deepEqual(olds, news) && !deepEqual(news.policy, output.policy)) {
-        return yield* mismatch("PolicyFile");
+        return yield* mismatch(
+          "Tailscale.PolicyFile",
+          changedPaths(news.policy, output.policy, "policy"),
+          id,
+        );
       }
       // Normal created/updated rows carry recorded attributes, not a fresh read.
       // Observe here as well, so an owned plan cannot hide external drift.
       const live = yield* observe();
       if (!deepEqual(olds?.policy, live.policy)) {
-        return yield* mismatch("PolicyFile drift");
+        return yield* mismatch(
+          "Tailscale.PolicyFile",
+          changedPaths(olds?.policy, live.policy, "policy"),
+          id,
+        );
       }
       if (!deepEqual(news.policy, live.policy)) {
         return { action: "update" } as const;
@@ -146,10 +160,12 @@ export const policyFileService = Effect.gen(function* policyFileService() {
       return output?.tailnet === tailnet ? live : Unowned(live);
     }),
     reconcile: Effect.fn("PolicyFile.reconcile")(function* program({
+      id,
       news,
       olds,
       output,
     }: {
+      id?: string;
       news: PolicyFileProps;
       olds: PolicyFileProps | undefined;
       output: PolicyFileAttributes | undefined;
@@ -158,13 +174,21 @@ export const policyFileService = Effect.gen(function* policyFileService() {
       if (deepEqual(news.policy, live.policy)) {
         return live;
       }
-      // beta.83 cold adoption supplies output but no olds. Never treat the
+      // beta.84 cold adoption supplies output but no olds. Never treat the
       // observed output as proof that an initial mutation was authorized.
       if (!olds || !output || output.tailnet !== tailnet) {
-        return yield* mismatch("PolicyFile");
+        return yield* mismatch(
+          "Tailscale.PolicyFile",
+          changedPaths(news.policy, live.policy, "policy"),
+          id,
+        );
       }
       if (!deepEqual(olds.policy, live.policy)) {
-        return yield* mismatch("PolicyFile drift");
+        return yield* mismatch(
+          "Tailscale.PolicyFile",
+          changedPaths(olds.policy, live.policy, "policy"),
+          id,
+        );
       }
       if (live.etag === undefined || live.etag === "") {
         return yield* Effect.fail(new MissingEtag());
@@ -193,16 +217,24 @@ export const dnsService = Effect.gen(function* dnsService() {
   });
   return {
     delete: () => Effect.void,
-    diff: Effect.fn("Dns.diff")(function* dnsDiff({ news, olds, output }) {
+    diff: Effect.fn("Dns.diff")(function* dnsDiff({ id, news, olds, output }) {
       if (!isResolved(news)) {
         return;
       }
       if (output && deepEqual(olds, news) && !deepEqual(news.configuration, output.configuration)) {
-        return yield* mismatch("Dns");
+        return yield* mismatch(
+          "Tailscale.Dns",
+          changedPaths(news.configuration, output.configuration, "configuration"),
+          id,
+        );
       }
       const live = yield* observe();
       if (!deepEqual(olds?.configuration, live.configuration)) {
-        return yield* mismatch("Dns drift");
+        return yield* mismatch(
+          "Tailscale.Dns",
+          changedPaths(olds?.configuration, live.configuration, "configuration"),
+          id,
+        );
       }
       if (!deepEqual(news.configuration, live.configuration)) {
         return { action: "update" } as const;
@@ -218,10 +250,12 @@ export const dnsService = Effect.gen(function* dnsService() {
       return output?.tailnet === tailnet ? live : Unowned(live);
     }),
     reconcile: Effect.fn("Dns.reconcile")(function* program({
+      id,
       news,
       olds,
       output,
     }: {
+      id?: string;
       news: DnsProps;
       olds: DnsProps | undefined;
       output: DnsAttributes | undefined;
@@ -231,7 +265,11 @@ export const dnsService = Effect.gen(function* dnsService() {
         return live;
       }
       if (!olds || !output || output.tailnet !== tailnet) {
-        return yield* mismatch("Dns");
+        return yield* mismatch(
+          "Tailscale.Dns",
+          changedPaths(news.configuration, live.configuration, "configuration"),
+          id,
+        );
       }
       // The spec documents neither ETag nor If-Match for DNS. Sending a header
       // that may be ignored does not make a fleet-wide overwrite safe.
@@ -256,7 +294,7 @@ export const deviceTagsService = Effect.sync(() => {
   });
   return {
     delete: () => Effect.void,
-    diff: Effect.fn("DeviceTags.diff")(function* program({ news, olds, output }) {
+    diff: Effect.fn("DeviceTags.diff")(function* program({ id, news, olds, output }) {
       if (!isResolved(news)) {
         return;
       }
@@ -264,11 +302,11 @@ export const deviceTagsService = Effect.sync(() => {
         return yield* Effect.fail(new DeviceLifecycleRefused({ operation: "changeIdentity" }));
       }
       if (output && deepEqual(olds, news) && !deviceMatches(news, output)) {
-        return yield* mismatch("DeviceTags");
+        return yield* mismatch("Tailscale.DeviceTags", devicePaths(news, output), id);
       }
       const live = yield* observe(news.deviceId);
       if (!deviceMatches(olds, live)) {
-        return yield* mismatch("DeviceTags drift");
+        return yield* mismatch("Tailscale.DeviceTags", devicePaths(olds, live), id);
       }
       if (!deviceMatches(news, live)) {
         return { action: "update" } as const;
@@ -290,10 +328,12 @@ export const deviceTagsService = Effect.sync(() => {
       return output ? live : Unowned(live);
     }),
     reconcile: Effect.fn("DeviceTags.reconcile")(function* program({
+      id,
       news,
       olds,
       output,
     }: {
+      id?: string;
       news: DeviceTagsProps;
       olds: DeviceTagsProps | undefined;
       output: DeviceTagsAttributes | undefined;
@@ -312,13 +352,13 @@ export const deviceTagsService = Effect.sync(() => {
         return live;
       }
       if (!olds || !output) {
-        return yield* mismatch("DeviceTags");
+        return yield* mismatch("Tailscale.DeviceTags", devicePaths(news, live), id);
       }
       if (
         !sameTags(live.tags, olds.tags) ||
         (olds.authorized !== undefined && live.authorized !== olds.authorized)
       ) {
-        return yield* mismatch("DeviceTags drift");
+        return yield* mismatch("Tailscale.DeviceTags", devicePaths(olds, live), id);
       }
       if (!sameTags(news.tags, live.tags)) {
         yield* Api.setDeviceTags({ deviceId: news.deviceId }, { tags: [...news.tags] });
@@ -351,7 +391,7 @@ export const authKeyService = Effect.gen(function* authKeyService() {
       output: AuthKeyAttributes;
     }) {
       if (output.tailnet !== tailnet) {
-        return yield* mismatch("AuthKey tailnet");
+        return yield* mismatch("Tailscale.AuthKey", ["tailnet"]);
       }
       yield* Api.deleteKey({ keyId: output.id, tailnet }).pipe(
         Effect.catchTag("ApiError", (error) =>
@@ -374,7 +414,7 @@ export const authKeyService = Effect.gen(function* authKeyService() {
         return undefined;
       }
       if (output.tailnet !== tailnet) {
-        return yield* mismatch("AuthKey tailnet");
+        return yield* mismatch("Tailscale.AuthKey", ["tailnet"]);
       }
       const key = yield* Api.getKey({ keyId: output.id, tailnet }).pipe(
         Effect.catchTag("ApiError", (error) =>
@@ -397,7 +437,7 @@ export const authKeyService = Effect.gen(function* authKeyService() {
     }) {
       if (output) {
         if (output.tailnet !== tailnet) {
-          return yield* mismatch("AuthKey tailnet");
+          return yield* mismatch("Tailscale.AuthKey", ["tailnet"]);
         }
         if (!deepEqual(news, olds)) {
           return yield* Effect.fail(new KeyReplacementRequired());

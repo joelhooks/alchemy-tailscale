@@ -15,6 +15,13 @@ import type { Providers } from "../src/resources.ts";
 import { DeviceTags, Dns, PolicyFile, providerLayer } from "../src/resources.ts";
 
 const kinds = ["PolicyFile", "Dns", "DeviceTags"] as const;
+const mismatchPath = {
+  DeviceTags: "tags",
+  Dns: "configuration.preferences.magicDNS",
+  PolicyFile: "policy.grants",
+};
+const mismatchMessage = (kind: Kind) =>
+  `Tailscale.${kind} (Resource): adoption or drift mismatch at ${mismatchPath[kind]}; refusing to overwrite live state. Review these fields before adopting or updating.`;
 type Kind = (typeof kinds)[number];
 const policy = { grants: [] };
 const changedPolicy = { grants: [{ dst: ["100.64.0.0/10"], ip: ["*"], src: ["tag:server"] }] };
@@ -140,7 +147,7 @@ it("removing DeviceTags plans retained cleanup without reading or changing the d
   );
 });
 
-// The actual beta.83 Plan engine drives provider.read and provider.diff. This
+// The actual beta.84 Plan engine drives provider.read and provider.diff. This
 // catches regressions that direct reconcile tests cannot see.
 describe.each(kinds)("%s engine planning", (kind) => {
   it("plans exact cold adoption as adopted, without writes or persisting state", async () => {
@@ -167,7 +174,12 @@ describe.each(kinds)("%s engine planning", (kind) => {
     );
     expect(Exit.findErrorOption(exit)).toMatchObject({
       _tag: "Some",
-      value: { _tag: "AdoptionMismatch" },
+      value: {
+        _tag: "AdoptionMismatch",
+        id: "Resource",
+        message: mismatchMessage(kind),
+        paths: [mismatchPath[kind]],
+      },
     });
     expect(f.requests.every((method) => method === "GET")).toBe(true);
   });
@@ -221,7 +233,12 @@ describe.each(kinds)("%s engine planning", (kind) => {
       );
       expect(Exit.findErrorOption(exit)).toMatchObject({
         _tag: "Some",
-        value: { _tag: "AdoptionMismatch" },
+        value: {
+          _tag: "AdoptionMismatch",
+          id: "Resource",
+          message: mismatchMessage(kind),
+          paths: [mismatchPath[kind]],
+        },
       });
       expect(f.requests.every((method) => method === "GET")).toBe(true);
     },

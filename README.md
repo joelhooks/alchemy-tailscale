@@ -50,12 +50,17 @@ This example does **not** authorize deploying an empty policy. First copy the
 existing policy into the private consumer stack, review the plan, and use
 Alchemy's explicit adoption option. Cold singleton reads are marked `Unowned`.
 Even with `--adopt`, the first reconciliation requires an exact match and sends
-no write. Alchemy beta.83 can pass observed output with `olds: undefined` during
+no write. Alchemy beta.84 can pass observed output with `olds: undefined` during
 adoption; that still counts as a first reconciliation, not an update grant.
 
 Planning checks live policy, DNS and device tags against the recorded props.
 Cold adoption fails with `AdoptionMismatch` when desired props differ from the
-observed resource. Exact adoption still prints `adopted` in Alchemy beta.83;
+observed resource. Its message identifies the resource type, logical ID when
+available, and differing field paths, never field values. Arrays report their
+field path (for example `tags`); map keys appear as quoted path segments (for
+example `policy.tagOwners["tag:example"]`). Map keys and logical IDs are visible
+in diagnostics, so do not put secrets in them.
+Exact adoption still prints `adopted` in Alchemy beta.84;
 that label is not a remote write. Owned live drift also fails during planning,
 even when the desired props have not changed. Ordinary owned input changes still
 plan as `update` when the live resource matches the recorded props. DNS apply
@@ -86,7 +91,7 @@ the **resource never calls it**. Do not bypass the resource's safety contract.
 ### AuthKey secret delivery
 
 AuthKey attributes contain only `id`, `tailnet`, `created`, and `expires`.
-They never contain key material, even wrapped in `Redacted`: Alchemy beta.83's
+They never contain key material, even wrapped in `Redacted`: Alchemy beta.84's
 state encoder unwraps `Redacted` values and would write their plaintext to state.
 
 Before creating keys, provide an `AuthKeySecrets` service alongside the providers

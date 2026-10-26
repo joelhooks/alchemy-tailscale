@@ -11,19 +11,19 @@ Tailscale v2 resources for Alchemy. This repository is public.
   upstream API input needed to regenerate the client.
 - `pnpm check` and `pnpm test` must pass. Keep the compile-only consumer stack
   aligned with the built public package exports.
-- PolicyFile is match-adopt-only on its first reconciliation. Alchemy beta.83
+- PolicyFile is match-adopt-only on its first reconciliation. Alchemy beta.84
   passes `olds: undefined` during adoption even when observed output exists.
   Keep that exact-match/no-write guard. `--adopt` never bypasses it.
 - Plan-time safety depends on `diff`, not just `reconcile`. In the pinned
-  `alchemy/src/Plan.ts`, lines 1382–1432 construct a cold-adopt row with
-  `props: news` and live `attr`. Lines 1586–1597 pass those as `olds` and
-  `output` to `diff`. Lines 1639–1642 force an adoption noop to update, and
-  lines 1779–1783 label that action `adopted`. Fail cold-adopt mismatches with
+  `alchemy/src/Plan.ts`, lines 1391–1442 construct a cold-adopt row with
+  `props: news` and live `attr`. Lines 1596–1606 pass those as `olds` and
+  `output` to `diff`. Lines 1648–1652 force an adoption noop to update, and
+  lines 1787–1794 label that action `adopted`. Fail cold-adopt mismatches with
   `AdoptionMismatch` before that label can hide drift.
 - Ordinary created/updated rows do **not** receive a fresh read before diff.
-  The refresh at `Plan.ts:1510–1567` only handles an interrupted `creating`
-  row with no attributes. Normal diff at `Plan.ts:1574–1597` uses persisted
-  props and attributes; early stable resolution at `Plan.ts:764–805` does
+  The refresh at `Plan.ts:1507–1577` only handles an interrupted `creating`
+  row with no attributes. Normal diff at `Plan.ts:1583–1606` uses persisted
+  props and attributes; early stable resolution at `Plan.ts:764–807` does
   too. Therefore policy, DNS and device diffs read live state themselves and
   refuse differences from recorded props, even with unchanged desired props.
   Keep legitimate owned input updates planning as `update` when live state
@@ -41,7 +41,7 @@ Tailscale v2 resources for Alchemy. This repository is public.
   belongs in this provider. Identity changes refuse. Removal and the provider's
   delete callback both retain the device and tags and succeed without an API
   request; do not return a permanent failure when removing the stack entry.
-- Alchemy beta.83's `StateEncoding.encodeState` deliberately unwraps Redacted
+- Alchemy beta.84's `StateEncoding.encodeState` deliberately unwraps Redacted
   values into plaintext state. Do not copy Axiom.ApiToken's attributes pattern.
   AuthKey keeps all secret material out of attributes and uses the explicit
   `AuthKeySecrets` service. Missing sink refuses before create. Test JSON and
