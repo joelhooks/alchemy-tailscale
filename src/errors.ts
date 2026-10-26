@@ -12,8 +12,15 @@ export class PreconditionFailed extends Schema.TaggedError<PreconditionFailed>()
   {},
 ) {}
 export class AdoptionMismatch extends Schema.TaggedError<AdoptionMismatch>()("AdoptionMismatch", {
+  id: Schema.optionalKey(Schema.String),
+  paths: Schema.Array(Schema.String),
   resource: Schema.String,
-}) {}
+}) {
+  override get message() {
+    const identity = this.id === undefined ? this.resource : `${this.resource} (${this.id})`;
+    return `${identity}: adoption or drift mismatch at ${this.paths.join(", ")}; refusing to overwrite live state. Review these fields before adopting or updating.`;
+  }
+}
 export class MissingEtag extends Schema.TaggedError<MissingEtag>()("MissingEtag", {}) {}
 export class PolicyValidationFailed extends Schema.TaggedError<PolicyValidationFailed>()(
   "PolicyValidationFailed",

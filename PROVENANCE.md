@@ -50,7 +50,7 @@ authentication, which the vendored document explicitly supports.
 
 ## Runtime and template
 
-- `alchemy@2.0.0-beta.83`: resource, provider, adoption and state-encoding contracts
+- `alchemy@2.0.0-beta.84`: resource, provider, adoption and state-encoding contracts
   inspected from its distributed npm source (`node_modules/alchemy/src`).
 - `effect@4.0.5`: typed effects, schemas, services, layers, redaction and HTTP.
   Pinned upstream source ref: `effect@4.0.5`.
