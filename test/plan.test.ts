@@ -1,4 +1,6 @@
 import * as Plan from "alchemy/Plan";
+import * as Apply from "alchemy/Apply";
+import { Stage } from "alchemy/Stage";
 import { AdoptPolicy } from "alchemy/AdoptPolicy";
 import { Stack } from "alchemy/Stack";
 import type { StackSpec } from "alchemy/Stack";
@@ -11,14 +13,15 @@ import { describe, expect, it } from "vitest";
 import { Credentials } from "../src/credentials.ts";
 import type { Transport } from "../src/transport.ts";
 import { transportLayer } from "../src/transport.ts";
-import type { Providers } from "../src/resources.ts";
-import { DeviceTags, Dns, PolicyFile, providerLayer } from "../src/resources.ts";
+import type { Providers, SettingsProps } from "../src/resources.ts";
+import { DeviceTags, Dns, PolicyFile, providerLayer, Settings } from "../src/resources.ts";
 
-const kinds = ["PolicyFile", "Dns", "DeviceTags"] as const;
+const kinds = ["PolicyFile", "Dns", "DeviceTags", "Settings"] as const;
 const mismatchPath = {
   DeviceTags: "tags",
   Dns: "configuration.preferences.magicDNS",
   PolicyFile: "policy.grants",
+  Settings: "settings.devicesAutoUpdatesOn",
 };
 const mismatchMessage = (kind: Kind) =>
   `Tailscale.${kind} (Resource): adoption or drift mismatch at ${mismatchPath[kind]}; refusing to overwrite live state. Review these fields before adopting or updating.`;
@@ -38,7 +41,19 @@ const changedConfiguration = {
 const device = { authorized: true, id: "example-device", tags: ["tag:server"] };
 const changedDevice = { ...device, tags: ["tag:server", "tag:example"] };
 
-const declare = (kind: Kind, changed = false) =>
+const settings: SettingsProps["settings"] = {
+  adminConsoleSessionTimeoutMinutes: 45,
+  devicesAutoUpdatesOn: true,
+  usersApprovalOn: null,
+};
+const changedSettings = { ...settings, devicesAutoUpdatesOn: false };
+const liveSettings = { ...settings, regionalRoutingOn: true };
+
+const declare = (
+  kind: Kind,
+  changed = false,
+  desiredSettings = changed ? changedSettings : settings,
+) =>
   Effect.gen(function* declareStack() {
     const stack: StackSpec<void> = {
       actions: {},
@@ -66,30 +81,48 @@ const declare = (kind: Kind, changed = false) =>
           });
           break;
         }
+        case "Settings": {
+          yield* Settings("Resource", { settings: desiredSettings });
+          break;
+        }
         default: {
-          throw new Error("Unknown fixture kind");
+          const unreachable: never = kind;
+          throw new Error(`Unknown fixture kind: ${String(unreachable)}`);
         }
       }
     }).pipe(Effect.provideService(Stack, stack));
     return stack;
   });
 
-const fixture = () => {
+const fixture = (allowSettingsPatch = false) => {
   const requests: string[] = [];
+  const patches: unknown[] = [];
   const live: Record<Kind, unknown> = {
     DeviceTags: device,
     Dns: configuration,
     PolicyFile: policy,
+    Settings: liveSettings,
   };
   const http = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
       Effect.sync(() => {
         requests.push(request.method);
-        if (request.method !== "GET") {
-          throw new Error("Plan must not write");
-        }
         const path = new URL(request.url).pathname;
+        if (
+          allowSettingsPatch &&
+          request.method === "PATCH" &&
+          path === "/api/v2/tailnet/example.com/settings" &&
+          request.body._tag === "Uint8Array"
+        ) {
+          const body: unknown = JSON.parse(new TextDecoder().decode(request.body.body));
+          patches.push(body);
+          live.Settings = { ...changedSettings, regionalRoutingOn: false };
+          return HttpResponse.fromWeb(request, Response.json(live.Settings));
+        }
+        if (request.method !== "GET") {
+          throw new Error("Unexpected fixture write");
+        }
         let body: unknown;
         if (path.endsWith("/acl")) {
           body = live.PolicyFile;
@@ -97,6 +130,8 @@ const fixture = () => {
           body = live.Dns;
         } else if (path.endsWith("/example-device")) {
           body = live.DeviceTags;
+        } else if (path === "/api/v2/tailnet/example.com/settings") {
+          body = live.Settings;
         } else {
           throw new Error(`Unexpected fixture path: ${path}`);
         }
@@ -124,7 +159,7 @@ const fixture = () => {
         Effect.provideService(AdoptPolicy, true),
       ),
     );
-  return { live, requests, run };
+  return { live, patches, requests, run };
 };
 
 it("removing DeviceTags plans retained cleanup without reading or changing the device", async () => {
@@ -145,6 +180,103 @@ it("removing DeviceTags plans retained cleanup without reading or changing the d
       expect(f.requests).toHaveLength(before);
     }),
   );
+});
+
+const applySettings = (stack: StackSpec<void>, plan: Plan.Plan) =>
+  Apply.apply(plan).pipe(Effect.provideService(Stack, stack), Effect.provideService(Stage, "test"));
+
+it("applies Settings adoption with no write, then patches only changed writable fields", async () => {
+  const f = fixture(true);
+  await f.run(
+    Effect.gen(function* updateSettings() {
+      const initial = yield* declare("Settings");
+      const adoption = yield* Plan.make(initial);
+      expect(adoption.resources.Resource?.action).toBe("adopted");
+      yield* applySettings(initial, adoption);
+      expect(f.requests.every((method) => method === "GET")).toBe(true);
+
+      // Drift in the deprecated, read-only projection does not affect ownership.
+      f.live.Settings = { ...settings, regionalRoutingOn: false };
+      const updated = yield* declare("Settings", true);
+      const plan = yield* Plan.make(updated);
+      expect(plan.resources.Resource?.action).toBe("update");
+      const beforeApply = f.requests.length;
+      yield* applySettings(updated, plan);
+      expect(f.requests.slice(beforeApply)).toEqual(["GET", "PATCH"]);
+      expect(f.patches).toEqual([{ devicesAutoUpdatesOn: false }]);
+      expect((yield* Plan.make(updated)).resources.Resource?.action).toBe("noop");
+
+      const beforeRemoval = f.requests.length;
+      const empty = { ...updated, resources: {} };
+      const removal = yield* Plan.make(empty);
+      expect(removal.deletions.Resource?.state.removalPolicy).toBe("retain");
+      yield* applySettings(empty, removal);
+      expect(f.requests).toHaveLength(beforeRemoval);
+    }),
+  );
+});
+
+it.each(["adopted", "update"])(
+  "refuses Settings drift between %s plan and apply",
+  async (action) => {
+    const f = fixture();
+    const exit = await f.run(
+      Effect.gen(function* driftBeforeApply() {
+        const initial = yield* declare("Settings");
+        const adoption = yield* Plan.make(initial);
+        const stack = action === "adopted" ? initial : yield* declare("Settings", true);
+        if (action === "update") {
+          yield* applySettings(initial, adoption);
+        }
+        const plan = action === "adopted" ? adoption : yield* Plan.make(stack);
+        expect(plan.resources.Resource?.action).toBe(action);
+        // For the owned update, live now equals the new desired state but differs
+        // from the old state: this still counts as an out-of-band edit.
+        f.live.Settings = changedSettings;
+        return yield* applySettings(stack, plan).pipe(Effect.exit);
+      }),
+    );
+    expect(Exit.findErrorOption(exit)).toMatchObject({
+      _tag: "Some",
+      value: { _tag: "AdoptionMismatch", paths: [mismatchPath.Settings] },
+    });
+    expect(f.requests.every((method) => method === "GET")).toBe(true);
+  },
+);
+
+it("rejects read-only Settings input even when it arrives through a typed variable", async () => {
+  const f = fixture();
+  const exit = await f.run(
+    Effect.gen(function* readOnlyInput() {
+      const stack = yield* declare("Settings", false, liveSettings);
+      return yield* Plan.make(stack).pipe(Effect.exit);
+    }),
+  );
+  expect(Exit.findErrorOption(exit)).toMatchObject({
+    _tag: "Some",
+    value: { _tag: "InvalidSettingsProps" },
+  });
+  expect(f.requests.every((method) => method === "GET")).toBe(true);
+});
+
+it("refuses Settings omissions rather than guessing how to reset a field", async () => {
+  const f = fixture();
+  const exit = await f.run(
+    Effect.gen(function* omittedField() {
+      const initial = yield* declare("Settings");
+      yield* applySettings(initial, yield* Plan.make(initial));
+      const stack = yield* declare("Settings", false, {
+        adminConsoleSessionTimeoutMinutes: 45,
+        devicesAutoUpdatesOn: true,
+      });
+      return yield* Plan.make(stack).pipe(Effect.exit);
+    }),
+  );
+  expect(Exit.findErrorOption(exit)).toMatchObject({
+    _tag: "Some",
+    value: { _tag: "UnsafeSettingsOmission", paths: ["settings.usersApprovalOn"] },
+  });
+  expect(f.requests.every((method) => method === "GET")).toBe(true);
 });
 
 // The actual beta.84 Plan engine drives provider.read and provider.diff. This
@@ -227,6 +359,7 @@ describe.each(kinds)("%s engine planning", (kind) => {
             DeviceTags: changedDevice,
             Dns: changedConfiguration,
             PolicyFile: changedPolicy,
+            Settings: { ...changedSettings, regionalRoutingOn: true },
           }[kind];
           return yield* Plan.make(yield* declare(kind, changed)).pipe(Effect.exit);
         }),

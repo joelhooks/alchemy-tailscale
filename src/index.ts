@@ -9,7 +9,15 @@ import { providerLayer } from "./resources.ts";
 export { Credentials, credentialsFromEnvironment } from "./credentials.ts";
 export { Transport, transportLayer } from "./transport.ts";
 export * from "./errors.ts";
-export { AuthKey, AuthKeySecrets, DeviceTags, Dns, PolicyFile, Providers } from "./resources.ts";
+export {
+  AuthKey,
+  AuthKeySecrets,
+  DeviceTags,
+  Dns,
+  PolicyFile,
+  Providers,
+  Settings,
+} from "./resources.ts";
 export type {
   AuthKeyAttributes,
   AuthKeyProps,
@@ -19,6 +27,8 @@ export type {
   DnsProps,
   PolicyFileAttributes,
   PolicyFileProps,
+  SettingsAttributes,
+  SettingsProps,
 } from "./resources.ts";
 export * as Client from "./generated/client.ts";
 
