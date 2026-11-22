@@ -9,6 +9,7 @@ This is an unpublished provider prototype. Development tests use synthetic fixtu
 | `Tailscale.DeviceTags` | Adopt existing tags and authorization; update only an existing device. Never create or delete a device. Removal succeeds without changing the device or its tags. |
 | `Tailscale.AuthKey`    | Create auth keys, deliver the one-time secret to an explicit sink, and revoke on removal. Input changes replace the key.                                          |
 | `Tailscale.Dns`        | Read/adopt exact DNS configuration only. Changed writes fail with `UnsafeDnsWrite`. Retain on removal.                                                            |
+| `Tailscale.Settings`   | Adopt an exact match of writable tailnet settings, then PATCH only changed fields after checking for drift. Retain on removal.                                    |
 
 ## Environment
 
@@ -53,7 +54,7 @@ Even with `--adopt`, the first reconciliation requires an exact match and sends
 no write. Alchemy beta.84 can pass observed output with `olds: undefined` during
 adoption; that still counts as a first reconciliation, not an update grant.
 
-Planning checks live policy, DNS and device tags against the recorded props.
+Planning checks live policy, DNS, device tags, and tailnet settings against the recorded props.
 Cold adoption fails with `AdoptionMismatch` when desired props differ from the
 observed resource. Its message identifies the resource type, logical ID when
 available, and differing field paths, never field values. Arrays report their
@@ -87,6 +88,33 @@ ignore would not protect a fleet-wide overwrite. Initial mismatch raises
 `AdoptionMismatch`; even recorded resources reject changed configuration with
 `UnsafeDnsWrite`. The client contains the generated setter for completeness;
 the **resource never calls it**. Do not bypass the resource's safety contract.
+
+### Tailnet settings
+
+Set the `settings` prop on `Tailscale.Settings` to the writable fields returned
+by `GET /tailnet/{tailnet}/settings`. Adoption compares the whole writable
+snapshot: an omitted field is not a wildcard, and an explicit `null` is not an
+omission. Use credentials that can read all writable settings; limited OAuth
+scopes can hide fields from the GET response. Use an explicit tailnet
+identifier for owned stacks so credential rotation cannot silently retarget `-`
+to another tailnet.
+
+The vendored `TailnetSettings` schema allows these fields in PATCH:
+
+- `aclsExternallyManagedOn`, `aclsExternalLink`, `adminConsoleSessionTimeoutMinutes`
+- `devicesApprovalOn`, `devicesAutoUpdatesOn`, `devicesKeyDurationDays`
+- `usersApprovalOn`, `usersRoleAllowedToJoinExternalTailnets`, `networkFlowLoggingOn`
+- `routeSelection`, `postureIdentityCollectionOn`, `httpsEnabled`
+
+`regionalRoutingOn` is read-only. It is excluded from props, drift comparison,
+resource attributes, and PATCH. Use `routeSelection` to manage routing.
+
+For an owned update, apply reads settings again, checks the recorded props,
+and sends only the changed fields. Dropping a field already present is refused
+with `UnsafeSettingsOmission`; omission in PATCH does not reset a setting. The
+spec does not document a conditional PATCH, so an edit between the final GET
+and PATCH can still race. Avoid console edits during apply. Removal drops only
+the Alchemy entry, with no API call or reset.
 
 ### AuthKey secret delivery
 
@@ -144,5 +172,5 @@ The full upstream OpenAPI document, its fetch date/hash, generated subset, and
 one schema correction are documented in [PROVENANCE.md](PROVENANCE.md).
 
 Do not run examples against a real tailnet without reviewing credentials and the
-plan. Removal retains policy, DNS, and devices; rolling back the package cannot
+plan. Removal retains policy, DNS, devices, and settings; rolling back the package cannot
 undo an already applied remote change.

@@ -27,6 +27,21 @@ export class PolicyValidationFailed extends Schema.TaggedError<PolicyValidationF
   {},
 ) {}
 export class UnsafeDnsWrite extends Schema.TaggedError<UnsafeDnsWrite>()("UnsafeDnsWrite", {}) {}
+export class InvalidSettingsProps extends Schema.TaggedError<InvalidSettingsProps>()(
+  "InvalidSettingsProps",
+  {},
+) {
+  override readonly message =
+    "Settings props must contain only writable tailnet settings with valid values.";
+}
+export class UnsafeSettingsOmission extends Schema.TaggedError<UnsafeSettingsOmission>()(
+  "UnsafeSettingsOmission",
+  { paths: Schema.Array(Schema.String) },
+) {
+  override get message() {
+    return `Cannot unset settings by omission: ${this.paths.join(", ")}. Set explicit values instead.`;
+  }
+}
 export class DeviceLifecycleRefused extends Schema.TaggedError<DeviceLifecycleRefused>()(
   "DeviceLifecycleRefused",
   {

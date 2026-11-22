@@ -142,6 +142,34 @@ export const Key = Schema.Struct({
 });
 export type Key = typeof Key.Type;
 
+export const TailnetSettings = Schema.Struct({
+  aclsExternallyManagedOn: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
+  aclsExternalLink: Schema.optionalKey(Schema.String),
+  adminConsoleSessionTimeoutMinutes: Schema.optionalKey(Schema.Number),
+  devicesApprovalOn: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
+  devicesAutoUpdatesOn: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
+  devicesKeyDurationDays: Schema.optionalKey(Schema.Number),
+  usersApprovalOn: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
+  usersRoleAllowedToJoinExternalTailnets: Schema.optionalKey(
+    Schema.Literals(["none", "admin", "member"]),
+  ),
+  networkFlowLoggingOn: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
+  regionalRoutingOn: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
+  routeSelection: Schema.optionalKey(
+    Schema.Union([
+      Schema.Literals([
+        "active-passive-failover",
+        "regional-routing",
+        "regional-routing-failover",
+        "magicroute",
+      ]),
+    ]),
+  ),
+  postureIdentityCollectionOn: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
+  httpsEnabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
+});
+export type TailnetSettings = typeof TailnetSettings.Type;
+
 export const getDeviceOutput = Device;
 export type getDeviceOutput = typeof getDeviceOutput.Type;
 
@@ -367,3 +395,54 @@ export const validateAndTestPolicyFile = Effect.fn("Tailscale.validateAndTestPol
     );
   },
 );
+
+export const getTailnetSettingsOutput = TailnetSettings;
+export type getTailnetSettingsOutput = typeof getTailnetSettingsOutput.Type;
+
+export const getTailnetSettings = Effect.fn("Tailscale.getTailnetSettings")(function* (
+  params: { tailnet: string },
+  headers: Readonly<Record<string, string>> = {},
+) {
+  const api = yield* Transport;
+  return yield* api.request(
+    "GET",
+    `/tailnet/${encodeURIComponent(params.tailnet)}/settings`,
+    undefined,
+    getTailnetSettingsOutput,
+    headers,
+  );
+});
+
+export const updateTailnetSettingsInput = TailnetSettings.mapFields((fields) => ({
+  aclsExternallyManagedOn: fields["aclsExternallyManagedOn"],
+  aclsExternalLink: fields["aclsExternalLink"],
+  adminConsoleSessionTimeoutMinutes: fields["adminConsoleSessionTimeoutMinutes"],
+  devicesApprovalOn: fields["devicesApprovalOn"],
+  devicesAutoUpdatesOn: fields["devicesAutoUpdatesOn"],
+  devicesKeyDurationDays: fields["devicesKeyDurationDays"],
+  usersApprovalOn: fields["usersApprovalOn"],
+  usersRoleAllowedToJoinExternalTailnets: fields["usersRoleAllowedToJoinExternalTailnets"],
+  networkFlowLoggingOn: fields["networkFlowLoggingOn"],
+  routeSelection: fields["routeSelection"],
+  postureIdentityCollectionOn: fields["postureIdentityCollectionOn"],
+  httpsEnabled: fields["httpsEnabled"],
+}));
+export type updateTailnetSettingsInput = typeof updateTailnetSettingsInput.Type;
+
+export const updateTailnetSettingsOutput = TailnetSettings;
+export type updateTailnetSettingsOutput = typeof updateTailnetSettingsOutput.Type;
+
+export const updateTailnetSettings = Effect.fn("Tailscale.updateTailnetSettings")(function* (
+  params: { tailnet: string },
+  body: updateTailnetSettingsInput,
+  headers: Readonly<Record<string, string>> = {},
+) {
+  const api = yield* Transport;
+  return yield* api.request(
+    "PATCH",
+    `/tailnet/${encodeURIComponent(params.tailnet)}/settings`,
+    body,
+    updateTailnetSettingsOutput,
+    headers,
+  );
+});

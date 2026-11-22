@@ -30,6 +30,7 @@ it("the built package wires provider lifecycle transports and the explicit secre
         "Tailscale.DeviceTags",
         "Tailscale.Dns",
         "Tailscale.PolicyFile",
+        "Tailscale.Settings",
       ]);
       const provider = collection.get("Tailscale.AuthKey");
       if (!provider) {

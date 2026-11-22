@@ -26,6 +26,9 @@ export default Alchemy.Stack(
         devices: { create: { ephemeral: true, preauthorized: true, tags: ["tag:server"] } },
       },
     });
-    return { device, dns, key, policy };
+    const settings = yield* Tailscale.Settings("Settings", {
+      settings: { adminConsoleSessionTimeoutMinutes: 45, devicesAutoUpdatesOn: null },
+    });
+    return { device, dns, key, policy, settings };
   }),
 );

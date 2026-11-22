@@ -1,7 +1,7 @@
 // Alchemy resources intentionally share a type/value name; services share a module.
 // Effect's `return yield* fail(...)` is a terminal typed failure, not a return value.
 /* oxlint-disable no-redeclare, max-classes-per-file, typescript/consistent-return, unicorn/no-useless-undefined */
-import { Context, Effect, Layer, Option, Redacted } from "effect";
+import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
 import { Resource } from "alchemy/Resource";
 import * as Provider from "alchemy/Provider";
 import { Unowned } from "alchemy/AdoptPolicy";
@@ -13,11 +13,13 @@ import { changedPaths, mismatch } from "./mismatch.ts";
 import {
   DeviceLifecycleRefused,
   InvalidResponse,
+  InvalidSettingsProps,
   KeyReplacementRequired,
   MissingEtag,
   PolicyValidationFailed,
   SecretDeliveryFailed,
   UnsafeDnsWrite,
+  UnsafeSettingsOmission,
 } from "./errors.ts";
 
 export class Providers extends Provider.ProviderCollection<Providers>()("Tailscale") {}
@@ -49,6 +51,24 @@ export interface DnsAttributes {
 }
 export type Dns = Resource<"Tailscale.Dns", DnsProps, DnsAttributes, never, Providers>;
 export const Dns = Resource<Dns>("Tailscale.Dns", { defaultRemovalPolicy: "retain" });
+
+export interface SettingsProps {
+  readonly settings: Api.updateTailnetSettingsInput;
+}
+export interface SettingsAttributes {
+  readonly tailnet: string;
+  readonly settings: Api.updateTailnetSettingsInput;
+}
+export type Settings = Resource<
+  "Tailscale.Settings",
+  SettingsProps,
+  SettingsAttributes,
+  never,
+  Providers
+>;
+export const Settings = Resource<Settings>("Tailscale.Settings", {
+  defaultRemovalPolicy: "retain",
+});
 
 export interface DeviceTagsProps {
   readonly deviceId: string;
@@ -278,6 +298,115 @@ export const dnsService = Effect.gen(function* dnsService() {
   } satisfies Provider.ProviderServiceInput<Dns, Transport, Transport, never, Transport>;
 });
 
+const decodeSettings = Schema.decodeUnknownEffect(Api.updateTailnetSettingsInput);
+const desiredSettings = (settings: unknown) =>
+  decodeSettings(settings, { onExcessProperty: "error" }).pipe(
+    Effect.mapError(() => new InvalidSettingsProps()),
+  );
+const settingsMismatch = (expected: unknown, actual: unknown, id?: string) =>
+  mismatch("Tailscale.Settings", changedPaths(expected, actual, "settings"), id);
+const omittedSettings = (
+  news: Api.updateTailnetSettingsInput,
+  live: Api.updateTailnetSettingsInput,
+) =>
+  Object.keys(live)
+    .filter((key) => !Object.hasOwn(news, key))
+    .toSorted()
+    .map((key) => `settings.${key}`);
+
+export const settingsService = Effect.gen(function* settingsService() {
+  const { tailnet } = yield* Credentials;
+  const attributes = (body: Api.TailnetSettings) =>
+    decodeSettings(body).pipe(
+      Effect.mapError(() => new InvalidResponse()),
+      Effect.map((settings): SettingsAttributes => ({ settings, tailnet })),
+    );
+  const observe = Effect.fn("Settings.observe")(function* observe() {
+    const current = yield* Api.getTailnetSettings({ tailnet });
+    return yield* attributes(current.body);
+  });
+  return {
+    delete: () => Effect.void,
+    diff: Effect.fn("Settings.diff")(function* settingsDiff({ id, news, olds, output }) {
+      if (!isResolved(news)) {
+        return;
+      }
+      const desired = yield* desiredSettings(news.settings);
+      if (output && output.tailnet !== tailnet) {
+        return yield* mismatch("Tailscale.Settings", ["tailnet"], id);
+      }
+      // Cold adoption supplies olds=news and a live snapshot. Check it before
+      // Alchemy can label the plan adopted. Owned output may be stale.
+      if (output && deepEqual(olds, news) && !deepEqual(desired, output.settings)) {
+        return yield* settingsMismatch(desired, output.settings, id);
+      }
+      const live = yield* observe();
+      if (!deepEqual(olds?.settings, live.settings)) {
+        return yield* settingsMismatch(olds?.settings, live.settings, id);
+      }
+      const paths = omittedSettings(desired, live.settings);
+      if (paths.length > 0) {
+        return yield* Effect.fail(new UnsafeSettingsOmission({ paths }));
+      }
+      if (!deepEqual(desired, live.settings)) {
+        return { action: "update" } as const;
+      }
+    }),
+    nuke: { singleton: true },
+    read: Effect.fn("Settings.read")(function* program({
+      output,
+    }: {
+      output: SettingsAttributes | undefined;
+    }) {
+      const live = yield* observe();
+      return output?.tailnet === tailnet ? live : Unowned(live);
+    }),
+    reconcile: Effect.fn("Settings.reconcile")(function* program({
+      id,
+      news,
+      olds,
+      output,
+    }: {
+      id?: string;
+      news: SettingsProps;
+      olds: SettingsProps | undefined;
+      output: SettingsAttributes | undefined;
+    }) {
+      const desired = yield* desiredSettings(news.settings);
+      if (output && output.tailnet !== tailnet) {
+        return yield* mismatch("Tailscale.Settings", ["tailnet"], id);
+      }
+      const live = yield* observe();
+      // beta.84 passes no olds during cold adoption even when output exists.
+      const expected = olds && output ? olds.settings : desired;
+      if (!deepEqual(expected, live.settings)) {
+        return yield* settingsMismatch(expected, live.settings, id);
+      }
+      if (deepEqual(desired, live.settings)) {
+        return live;
+      }
+      const paths = omittedSettings(desired, live.settings);
+      if (paths.length > 0) {
+        return yield* Effect.fail(new UnsafeSettingsOmission({ paths }));
+      }
+      const baseline: Readonly<Record<string, unknown>> = live.settings;
+      const patch = yield* desiredSettings(
+        Object.fromEntries(
+          Object.entries<unknown>(desired).filter(
+            ([key, value]) => !deepEqual(value, baseline[key]),
+          ),
+        ),
+      );
+      const updated = yield* Api.updateTailnetSettings({ tailnet }, patch);
+      const result = yield* attributes(updated.body);
+      if (!deepEqual(desired, result.settings)) {
+        return yield* settingsMismatch(desired, result.settings, id);
+      }
+      return result;
+    }),
+  } satisfies Provider.ProviderServiceInput<Settings, Transport, Transport, never, Transport>;
+});
+
 export const deviceTagsService = Effect.sync(() => {
   const observe = Effect.fn("DeviceTags.observe")(function* observe(deviceId: string) {
     const current = yield* Api.getDevice({ deviceId }).pipe(
@@ -461,11 +590,21 @@ export const authKeyService = Effect.gen(function* authKeyService() {
 
 export const PolicyFileProvider = () => Provider.effect(PolicyFile, policyFileService);
 export const DnsProvider = () => Provider.effect(Dns, dnsService);
+export const SettingsProvider = () => Provider.effect(Settings, settingsService);
 export const DeviceTagsProvider = () => Provider.effect(DeviceTags, deviceTagsService);
 export const AuthKeyProvider = () => Provider.effect(AuthKey, authKeyService);
 export const providerLayer = () =>
-  Layer.effect(Providers, Provider.collection([PolicyFile, Dns, DeviceTags, AuthKey])).pipe(
+  Layer.effect(
+    Providers,
+    Provider.collection([PolicyFile, Dns, Settings, DeviceTags, AuthKey]),
+  ).pipe(
     Layer.provide(
-      Layer.mergeAll(PolicyFileProvider(), DnsProvider(), DeviceTagsProvider(), AuthKeyProvider()),
+      Layer.mergeAll(
+        PolicyFileProvider(),
+        DnsProvider(),
+        SettingsProvider(),
+        DeviceTagsProvider(),
+        AuthKeyProvider(),
+      ),
     ),
   );

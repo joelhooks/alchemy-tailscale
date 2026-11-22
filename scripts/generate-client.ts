@@ -9,6 +9,7 @@ interface Node {
   type?: string | string[];
   properties?: Record<string, Node>;
   required?: string[];
+  readOnly?: boolean;
   items?: Node;
   additionalProperties?: boolean | Node;
   enum?: (string | number | boolean)[];
@@ -41,6 +42,8 @@ const selected = new Set([
   "deleteKey",
   "getDnsConfiguration",
   "setDnsConfiguration",
+  "getTailnetSettings",
+  "updateTailnetSettings",
 ]);
 const definitions = new Map<string, string>();
 const schema = (n: Node): string => {
@@ -122,6 +125,17 @@ for (const [path, item] of Object.entries(spec.paths)) {
     // that variant a string. Keep this one explicit, documented correction.
     let reqSchema = request ? schema(request) : undefined;
     let resSchema = response ? schema(response) : "Schema.Void";
+    if (name === "updateTailnetSettings") {
+      // The spec shares its GET and PATCH schema, but marks some fields read-only.
+      const fields = spec.components.schemas.TailnetSettings?.properties;
+      if (reqSchema !== "TailnetSettings" || !fields) {
+        throw new Error("Expected the TailnetSettings request schema");
+      }
+      const writableKeys = Object.entries(fields)
+        .filter(([, field]) => field.readOnly !== true)
+        .map(([key]) => JSON.stringify(key));
+      reqSchema = `TailnetSettings.mapFields((fields) => ({${writableKeys.map((key) => `${key}: fields[${key}]`).join(",")}}))`;
+    }
     if (name === "validateAndTestPolicyFile") {
       reqSchema = "Schema.Record(Schema.String, Schema.Json)";
       resSchema = "Schema.Record(Schema.String, Schema.Json)";
